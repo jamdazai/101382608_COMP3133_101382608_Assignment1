@@ -2,46 +2,42 @@
  * @author: Jam Furaque
  */
 
+const { GraphQLUpload } = require('graphql-upload');         // ADDED FOR FILE UPLOAD
+const fs = require('fs');
+const path = require('path');
 const { check, validationResult } = require('express-validator');
 const Employee = require('../models/employee');
 const authMiddleware = require('../middleware/auth');
+const mongoose = require('mongoose');
 
 module.exports = {
+  Upload: GraphQLUpload,                                                                  // FILE UPLOAD TYPE
+
   Query: {
-    getAllEmployees: authMiddleware(async (_, args, context) => {                           // GET ALL EMPLOYEES FUNCTION
-      const validations = [                                                                 // BEFORE GETTING ALL EMPLOYEES,
-        check('_id', 'Invalid ID format').optional().isMongoId(),                           // OFCOURSE WE NEED TO VALIDATE THE INPUT FIRST RIGHT?
-      ];
-
-      for (let validation of validations) {
-        const result = await validation.run({ query: args });
-        if (!result.isEmpty()) {
-          throw new Error(result.array()[0].msg);
-        }
-      }
-
+    getAllEmployees: authMiddleware(async () => {                                         // GET ALL EMPLOYEES FUNCTION
       try {
-        const employees = await Employee.find();                                            // AFTER THE VALIDATION, THEN BRO
-        return employees;                                                                   // WE CAN PROCEED
+        return await Employee.find()
+        .select("_id firstName lastName email designation salary date_of_joining department employeePhoto");
       } catch (error) {
         throw new Error('Error retrieving employees: ' + error.message);
       }
     }),
 
-    getEmployeeById: authMiddleware(async (_, { eid }) => {                                 // GET EMPLOYEE BY ID FUNCTION             
-      await check('eid', 'Invalid Employee ID').isMongoId().run({ params: { eid } });       // Again, before getting the employee by ID
-                                                                                            // Check if ID is valid.,
+    getEmployeeById: authMiddleware(async (_, { eid }) => {                              // GET EMPLOYEE BY ID FUNCTION
+      await check('eid', 'Invalid Employee ID')                                          // Again, before getting the employee by ID
+      .isMongoId().run({ params: { eid } });                                             // Check if ID is valid.,
+
       const errors = validationResult({ params: { eid } });
       if (!errors.isEmpty()) {
         throw new Error(errors.array()[0].msg);
       }
 
       try {
-        const employee = await Employee.findById(eid);
+        const employee = await Employee.findById(eid).select("_id firstName lastName email designation salary date_of_joining department employeePhoto");                                  // SEARCH EMPLOYEE BY ID
         if (!employee) {
-          throw new Error('Employee not found.');                                       
+          throw new Error('Employee not found.');                                       // BRO, THE EMPLOYEE IS MISSING!
         }
-        return employee;
+        return employee;                                                                // FOUND HIM!
       } catch (error) {
         throw new Error('Error finding employee: ' + error.message);
       }
@@ -76,86 +72,187 @@ module.exports = {
   },
 
   Mutation: {
-    createEmployee: authMiddleware(async (_, { employeeInput }) => {                // FUNCTION TO CREATE EMPOYEES
-      const validations = [                                                         // Before creating an employee, we need to validate inputs
-        check('email', 'Invalid email format').isEmail(),                           // Like email,
-        check('salary', 'Salary must be at least 1000').isFloat({ min: 1000 }),     // Salary,  
-        check('firstName', 'First name is required').notEmpty(),                    // First name, because it should not be empty right?
-        check('lastName', 'Last name is required').notEmpty(),                      // Last name, because we dont want our employee to be nameless
-        check('designation', 'Designation is required').notEmpty(),                 // Designation, where do you want to put them? Inside fridge?
-        check('department', 'Department is required').notEmpty(),                   // Department, because we need to know where they belong
+    createEmployee: authMiddleware(async (_, { employeeInput, file }) => {                // FUNCTION TO CREATE EMPLOYEE
+      const validations = [                                                               // THESE ARE SOME FEW VALIDATIONS
+          check('email', 'Invalid email format').isEmail(),                               // WE HAVE ONA OUR BOAT :))
+          check('salary', 'Salary must be at least 1000').isFloat({ min: 1000 }),
+          check('firstName', 'First name is required').notEmpty(),
+          check('lastName', 'Last name is required').notEmpty(),
+          check('designation', 'Designation is required').notEmpty(),
+          check('department', 'Department is required').notEmpty(),
       ];
-
+  
       for (let validation of validations) {
-        const result = await validation.run({ body: employeeInput });
-        if (!result.isEmpty()) {
-          throw new Error(result.array()[0].msg);
-        }
+          const result = await validation.run({ body: employeeInput });
+          if (!result.isEmpty()) {
+              throw new Error(result.array()[0].msg);
+          }
       }
-
-      try {                                                                         // After validation process,
-        const { email } = employeeInput;                                            // Check if the employee already exists                   
-        const existingEmployee = await Employee.findOne({ email });                 // If the employee already exists, then throw an error
-        if (existingEmployee) {
-          throw new Error('Employee with this email already exists.');
-        }
-        const employee = new Employee(employeeInput);                               // If not, then let's summon thy employee LOL
-        await employee.save();
-        return employee;
-      } catch (error) {
-        throw new Error('Error creating employee: ' + error.message);
-      }
-    }),
-
-    updateEmployee: authMiddleware(async (_, { eid, employeeInput }) => {           // FUNCTION TO UPDATE EMPLOYEE
+  
       try {
-        const employee = await Employee.findById(eid);                              // Before updating an employee, 
-        if (!employee) {                                                            // Ofc, check if they really exist or just a daydream 
-          throw new Error('Employee not found.');
-        }
-        const fieldsToValidate = Object.keys(employeeInput);                        // Then, validate the fields we want to update            
-        for (let field of fieldsToValidate) {
-          if (field === 'email') {                                                                    // Like email
-            await check('email', 'Invalid email format').isEmail().run({ body: employeeInput });
+          const { email } = employeeInput;
+          const existingEmployee = await Employee.findOne({ email });
+          if (existingEmployee) {
+              throw new Error('Employee with this email already exists.');
           }
-          if (field === 'salary') {                                                                   // and salary                           
-            await check('salary', 'Salary must be at least 1000').isFloat({ min: 1000 }).run({ body: employeeInput });
+  
+          let uploadedFilePath = null;
+          if (file) {
+              console.log("📂 Received File:", file);
+              
+              const upload = await file;
+              if (!upload || !upload.file || !upload.file.filename) {
+                  throw new Error("Error: Filename is missing.");
+              }
+  
+              const { createReadStream, filename } = upload.file;
+              const uploadDir = path.join(__dirname, '../uploads');
+  
+              if (!fs.existsSync(uploadDir)) {
+                  fs.mkdirSync(uploadDir, { recursive: true });
+              }
+  
+              const filePath = path.join(uploadDir, filename);
+              const stream = createReadStream();
+              await new Promise((resolve, reject) => {
+                  const out = fs.createWriteStream(filePath);
+                  stream.pipe(out);
+                  out.on('finish', resolve);
+                  out.on('error', reject);
+              });
+              uploadedFilePath = `/uploads/${filename}`;
           }
-        }
-
-        const errors = validationResult({ body: employeeInput });                   // After validation,
-        if (!errors.isEmpty()) {                                                    // If there are errors, then throw an error             
-          throw new Error(errors.array()[0].msg);
-        }
-
-        Object.keys(employeeInput).forEach((key) => {                               // if there's no errors, dang that's a good sign 
-          employee[key] = employeeInput[key];
-        });
-
-        employee.updated = new Date();                                              // Update the employee then save it
-        await employee.save();
-        return employee;
+          const employee = new Employee({ ...employeeInput, employeePhoto: uploadedFilePath }); // SUMMON EMPLOYEE WITH HIS DATA
+          await employee.save();
+          console.log("Employee Created:", employee);                                           // JUST A LOG CUZ IM MESSED UP EARLIER
+          return employee;
       } catch (error) {
-        throw new Error('Error updating employee: ' + error.message);
+          throw new Error('Error creating employee: ' + error.message);
       }
-    }),
+  }),
+  
+  
+  updateEmployee: authMiddleware(async (_, { eid, employeeInput, file }) => {                 // FUNCTION TO UPDATE EMPLOYEE
+    try {
+        console.log("Received Employee ID:", eid);                                            // DONT MIND THESE LOGS
+        console.log("Received File:", file);                                                  // I DONT KNOW WHERE'S THE ERROR EARLIER
+        console.log("Received Employee Input:", employeeInput);                               // SO I WAST JUST TRYING TO HELP THE EARTH
+        if (!mongoose.Types.ObjectId.isValid(eid)) {
+            throw new Error(`Invalid Employee ID: ${eid}.`);
+        }
+        const objectId = new mongoose.Types.ObjectId(eid);
+        const employee = await Employee.findById(objectId);
+        if (!employee) {
+            throw new Error("Employee not found.");
+        }
 
-    deleteEmployee: authMiddleware(async (_, { eid }) => {                            // FUNCTION TO DELETE EMPLOYEE
-      await check('eid', 'Invalid Employee ID').isMongoId().run({ params: { eid } }); // Again, before deleting an employee, make sure the id is valid
-      const errors = validationResult({ params: { eid } });                           // If not, then throw an error.
+        let uploadedFilePath = employee.employeePhoto;                                // IN THIS PART, I WANT TO HANDLE FILE UPLOAD
+        if (file) {                                                                   // KEEPS GETTING ME ERROR ON POSTMAN -_-
+            console.log("Resolving file..");
+            const resolvedFile = await file.promise;
+            console.log("Resolved File Object: ", resolvedFile);
+
+            const { createReadStream, filename, mimetype } = resolvedFile;
+
+            if (!filename) {
+                throw new Error("Filename is undefined.");                            // FREAKIN FILE NAME, IDK WHAT;S WRONG WITH U
+            }
+
+            console.log("📂 Resolved File Data:", { filename, mimetype });
+            const uploadDir = path.join(__dirname, "../uploads");
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+
+            const filePath = path.join(uploadDir, filename);
+            const stream = createReadStream();
+            await new Promise((resolve, reject) => {
+                const out = fs.createWriteStream(filePath);
+                stream.pipe(out);
+                out.on("finish", resolve);
+                out.on("error", reject);
+            });
+            uploadedFilePath = `/uploads/${filename}`;
+        }
+
+        if (!employeeInput) {
+            throw new Error("sOME input is missing from the request.");
+        }
+
+        const updatedData = { ...employeeInput };
+        if (file) {
+            updatedData.employeePhoto = uploadedFilePath;
+        }
+        console.log("Updating employee with these data: ", updatedData);
+        const updatedEmployee = await Employee.findByIdAndUpdate(
+            objectId,
+            { $set: updatedData },
+            { new: true, runValidators: true }
+        );
+        console.log("Successfully updated employee: ", updatedEmployee);
+        return updatedEmployee;
+    } catch (error) {
+        console.error("Something went wrong..", error.message);
+        throw new Error("Something went wrong. Error updating employee: " + error.message);
+    }
+}),
+
+
+    deleteEmployee: authMiddleware(async (_, { eid }) => {                              // FUNCTION TO DELETE EMPLOYEE
+      await check('eid', 'Invalid Employee ID')                                         // THIS IS USEFUL MOSTLY
+      .isMongoId().run({ params: { eid } });                                            // WHEN COMPANY IS FIRING PPL LOL
+      const errors = validationResult({ params: { eid } });
       if (!errors.isEmpty()) {
         throw new Error(errors.array()[0].msg);
       }
 
       try {
-        const employee = await Employee.findByIdAndDelete(eid);                       // If the id is valid, then eliminate that employee!
+        const employee = await Employee.findByIdAndDelete(eid);
         if (!employee) {
-          throw new Error('Employee not found.');                                     // Oops, we can't find the employee, throw an error then.
+          throw new Error('Employee not found.');
         }
-        return 'Employee deleted successfully.';                                      // If we got him, throw him out of the bus then lol
+        return 'Employee deleted successfully.';                                        // EMPLOYEE ELIMINATED LOL
       } catch (error) {
         throw new Error('Error deleting employee: ' + error.message);
       }
+    }),
+
+
+    uploadEmployeePhoto: authMiddleware(async (_, { file }) => {            // UPLOAD EMPLOYEE PHOTO FUNCTION
+      try {                                                                 // PROF, IF YOURE READING THIS
+          if (!file) {                                                      // I WANT YOU TO KNOW THIS CAUSE ME A LOT OF TROUBLE HAHAHA
+              throw new Error('No file uploaded');
+          }
+          console.log("Received file:", file);                              // THESE LOGS INDICATES MY FRUSTRATION BC OF ERRORS
+
+          const resolvedFile = await file;                                  
+          console.log("Resolved file:", resolvedFile);                      // RESOLVE THE PROMISE INSIDE THE UPLOAD OBJECT
+          
+          const fileData = await resolvedFile.promise;
+          console.log("Extracted fileData:", fileData);
+  
+          const { filename, mimetype, createReadStream } = fileData;
+          console.log("Parsed file:", { filename, mimetype });
+  
+          if (!filename) {
+              throw new Error('Filename undefined.');
+          }
+  
+          const uploadDir = path.join(__dirname, '../uploads');
+
+          if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);           // DONT FORGET TO CHECK THE UPLOAD DIRECTORYW
+          const filePath = path.join(uploadDir, filename);                  // NOW, CREATE THE FILE PATH
+          const stream = createReadStream();                                // AND THEN, CREATE THE STREAM
+          await new Promise((resolve, reject) => {
+              const out = fs.createWriteStream(filePath);
+              stream.pipe(out);
+              out.on('finish', resolve);
+              out.on('error', reject);
+          });
+          console.log("File uploaded successfully:", filePath);
+          return `/uploads/${filename}`;
+        } catch (error) {
+          console.error('Upload Error:', error);
+          throw new Error('File upload failed: ' + error.message);
+        }
     }),
   },
 };

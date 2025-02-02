@@ -1,10 +1,8 @@
-/**
- * @author: Jam Furaque
- */
-
 const { gql } = require('apollo-server-express');
 
 const employeeType = gql`
+    scalar Upload  # Support file upload
+
     type Employee {
         _id: ID!
         firstName: String!
@@ -15,7 +13,7 @@ const employeeType = gql`
         salary: Float!
         date_of_joining: String!
         department: String!
-        employeePhoto: String!
+        employeePhoto: String
         created: String!
         updated: String!
     }
@@ -29,10 +27,10 @@ const employeeType = gql`
         salary: Float
         date_of_joining: String
         department: String
-        employeePhoto: String
+        employeePhoto: Upload
     }
 
-    input SearchEmployeeInput{
+    input SearchEmployeeInput {
         department: String
         designation: String
     }
@@ -42,11 +40,12 @@ const employeeType = gql`
         getEmployeeById(eid: ID!): Employee
         getAllEmployees: [Employee]
     }
-      
+
     type Mutation {
-        createEmployee(employeeInput: EmployeeInput): Employee
-        updateEmployee(eid: ID!, employeeInput: EmployeeInput): Employee
+        createEmployee(employeeInput: EmployeeInput, file: Upload): Employee
+        updateEmployee(eid: ID!, employeeInput: EmployeeInput, file: Upload): Employee
         deleteEmployee(eid: ID!): String
+        uploadEmployeePhoto(file: Upload!): String
     }
 `;
 

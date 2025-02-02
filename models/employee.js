@@ -5,7 +5,7 @@
 // THIS FILE IS FOR OUR EMPLOYEE MODEL.
 // WE'RE GOING TO BUILD THE SCHEMA
 // WITH USE OF THE PROPERTIES THAT WAS PROVIDED 
-// IN THE INSTRUCTION.
+// BY SIR PATEL IN THE ASSIGNMENT.
 
 const mongoose = require('mongoose');
 const { create } = require('./user');
